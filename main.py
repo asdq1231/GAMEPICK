@@ -1,11 +1,13 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
 import openai
+from openai import OpenAI
 from fastapi.middleware.cors import CORSMiddleware
+import os
 
 app = FastAPI()
 
-# 모든 접속 허용 (무료 배포 필수 설정)
+# 모든 접속 허용 (프론트엔드 연결 필수 설정)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -13,39 +15,31 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-openai.api_key = "sk-..." # 여기에 사장님의 OpenAI 키를 넣으세요
+# Render 환경변수에서 API 키를 가져옵니다.
+# 'OPENAI_API_KEY'라는 이름으로 등록하셨다면 os.getenv가 자동으로 읽어옵니다.
+api_key = os.getenv("OPENAI_API_KEY")
+client = OpenAI(api_key=api_key)
 
 class SearchQuery(BaseModel):
     query: str
 
+# 기본 페이지 (접속 확인용)
+@app.get("/")
+def read_root():
+    return {"message": "서버가 정상적으로 작동 중입니다!", "api_connected": api_key is not None}
+
 @app.post("/search")
 async def search_game(data: SearchQuery):
-    prompt = f"""
-    게임 '{data.query}'에 대한 정보를 다음 형식의 HTML 카드로 1개만 만들어줘:
-    
-    <div class="card">
-        <div class="flex justify-between items-start mb-4">
-            <span class="tag">SALE</span>
-            <div class="text-right">
-                <div class="score-steam">추천 95%</div>
-                <div class="score-meta">META 88</div>
-            </div>
-        </div>
-        <h2 class="title text-2xl font-bold mb-2">게임명</h2>
-        <p class="desc text-gray-400 text-sm mb-6">AI 요약: 게임의 핵심 재미요소 1문장</p>
-        <div class="flex justify-between items-center border-t border-gray-800 pt-4">
-            <span class="price text-xl font-black text-green-400">₩ 35,000</span>
-            <a href="#" class="btn-link">스팀 바로가기</a>
-        </div>
-    </div>
-    """
-    
+    prompt = f"게임 '{data.query}'에 대한 정보를 HTML 카드 형식으로 요약해줘."
+
     try:
-        response = openai.ChatCompletion.create(
+        response = client.chat.completions.create(
             model="gpt-3.5-turbo",
-            messages=[{"role": "system", "content": "너는 깔끔한 정보를 제공하는 게임 큐레이터야."}, 
-                      {"role": "user", "content": prompt}]
+            messages=[
+                {"role": "system", "content": "너는 깔끔한 정보를 제공하는 게임 큐레이터야."},
+                {"role": "user", "content": prompt}
+            ]
         )
         return {"result": response.choices[0].message.content}
-    except:
-        return {"result": "<p class='text-white'>오류가 발생했습니다. 키를 확인하세요.</p>"}
+    except Exception as e:
+        return {"result": f"에러 발생: {str(e)}"}
