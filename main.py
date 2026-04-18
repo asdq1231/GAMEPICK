@@ -15,7 +15,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-api_key = os.getenv("OPENAI_API_KEY")
+api_key = "sk-...B74A"
 client = OpenAI(api_key=api_key)
 
 class SearchQuery(BaseModel):
