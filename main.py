@@ -7,7 +7,7 @@ from openai import OpenAI
 
 app = FastAPI()
 
-# 보안 및 CORS 설정 (Render 배포 시 필수)
+# 1. CORS 설정 (브라우저 통신 허용)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -15,12 +15,20 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-api_key = "sk-...B74A"
+# 2. OpenAI 클라이언트 설정
+# 주의: Render의 Environment Variables에 OPENAI_API_KEY가 반드시 등록되어 있어야 합니다.
+api_key = os.getenv("OPENAI_API_KEY")
 client = OpenAI(api_key=api_key)
 
-class SearchQuery(BaseModel):
-    query: str
+# 3. 데이터 모델 정의 (기획자가 입력할 수치들)
+class EconomyData(BaseModel):
+    itemName: str
+    attackPower: int
+    itemPrice: int
+    dropRate: float
+    userLevel: int
 
+# 4. 메인 페이지 (UI)
 @app.get("/", response_class=HTMLResponse)
 async def read_index():
     return """
@@ -29,231 +37,146 @@ async def read_index():
     <head>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>GAMEPICK | AI Experience Matcher</title>
+        <title>GAMEPICK B2B | AI Economy Simulator</title>
         <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.css" />
         <style>
             :root { 
-                --gp-bg: #0b0e14; 
-                --gp-card: #161b22; 
-                --gp-purple: #8b5cf6; 
-                --gp-purple-light: #a78bfa;
-                --gp-green: #10b981; 
-                --gp-text: #e2e8f0;
-                --gp-sidebar: #12151e;
+                --bg: #0b0e14; --card: #161b22; --purple: #8b5cf6; --accent: #10b981; --text: #e2e8f0; 
             }
-            
             body { 
-                font-family: 'Pretendard', sans-serif; 
-                background: var(--gp-bg); 
-                color: var(--gp-text); 
-                margin: 0; 
-                display: flex; 
-                flex-direction: column; 
-                height: 100vh;
-                overflow: hidden;
+                font-family: 'Pretendard', sans-serif; background: var(--bg); color: var(--text); 
+                margin: 0; display: flex; flex-direction: column; min-height: 100vh; align-items: center; padding: 40px 20px;
+            }
+            .header { text-align: center; margin-bottom: 40px; }
+            .header h1 { font-size: 2.2rem; color: var(--purple); margin: 0; }
+            .header p { color: #8b949e; margin-top: 10px; }
+
+            .container { 
+                width: 100%; max-width: 900px; background: var(--card); border: 1px solid #30363d; 
+                border-radius: 16px; padding: 40px; box-shadow: 0 20px 50px rgba(0,0,0,0.5);
             }
             
-            /* 상단 네비게이션 */
-            nav { 
-                background: #000; 
-                padding: 15px 5%; 
-                display: flex; 
-                align-items: center; 
-                justify-content: space-between; 
-                border-bottom: 1px solid #333; 
-                z-index: 100;
+            /* 입력 폼 스타일 */
+            .input-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 25px; margin-bottom: 30px; }
+            .input-group { display: flex; flex-direction: column; }
+            .input-group label { font-size: 0.9rem; font-weight: 600; margin-bottom: 8px; color: #acb2b8; }
+            .input-group input { 
+                background: #0d1117; border: 1px solid #30363d; color: #fff; padding: 12px 15px; 
+                border-radius: 8px; font-size: 1rem; outline: none; transition: 0.2s;
             }
-            .logo { 
-                font-size: 1.6rem; 
-                font-weight: 900; 
-                color: var(--gp-purple); 
-                text-decoration: none; 
-                letter-spacing: 2px;
-                text-transform: uppercase;
-            }
-            .search-box { 
-                background: #1c2128; 
-                border: 1px solid #30363d;
-                padding: 8px 20px; 
-                border-radius: 20px; 
-                display: flex; 
-                align-items: center;
-                transition: 0.3s;
-            }
-            .search-box:focus-within { border-color: var(--gp-purple); box-shadow: 0 0 10px rgba(139, 92, 246, 0.2); }
-            .search-box input { background: transparent; border: none; color: #fff; outline: none; width: 300px; }
+            .input-group input:focus { border-color: var(--purple); box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.2); }
 
-            /* 전체 레이아웃 */
-            .wrapper { display: flex; flex: 1; overflow: hidden; }
+            button { 
+                width: 100%; background: var(--purple); color: #fff; border: none; padding: 18px; 
+                border-radius: 12px; font-size: 1.1rem; font-weight: 700; cursor: pointer; transition: 0.3s;
+            }
+            button:hover { filter: brightness(1.2); transform: translateY(-2px); }
+
+            /* 분석 결과 창 */
+            #loading { display: none; text-align: center; margin-top: 30px; }
+            #result-area { display: none; margin-top: 40px; border-top: 1px solid #30363d; padding-top: 30px; line-height: 1.7; }
             
-            /* 좌측 사이드바 */
-            .sidebar { 
-                width: 240px; 
-                background: var(--gp-sidebar); 
-                padding: 40px 20px; 
-                border-right: 1px solid rgba(255,255,255,0.05);
-            }
-            .side-title { color: var(--gp-purple-light); font-size: 0.8rem; font-weight: bold; text-transform: uppercase; margin-bottom: 20px; letter-spacing: 1px; }
-            .side-menu { list-style: none; padding: 0; margin-bottom: 40px; }
-            .side-menu li { padding: 12px 0; color: #8b949e; cursor: pointer; transition: 0.2s; font-size: 0.95rem; }
-            .side-menu li:hover { color: #fff; transform: translateX(8px); }
-
-            /* 우측 메인 영역 */
-            .main-content { flex: 1; padding: 40px; overflow-y: auto; background: radial-gradient(at top left, #1a1033 0%, #0b0e14 40%); }
-            .hero-section { text-align: center; margin-bottom: 50px; }
-            .hero-section h1 { font-size: 2.2rem; margin-bottom: 15px; }
-            
-            /* 플레이 성향 태그 */
-            .tag-group { display: flex; justify-content: center; gap: 10px; flex-wrap: wrap; margin-top: 20px; }
-            .play-tag { 
-                background: rgba(139, 92, 246, 0.1); 
-                border: 1px solid rgba(139, 92, 246, 0.3);
-                padding: 8px 18px; 
-                border-radius: 30px; 
-                font-size: 0.85rem; 
-                cursor: pointer; 
-                transition: 0.3s;
-            }
-            .play-tag:hover { background: var(--gp-purple); color: #fff; transform: scale(1.05); }
-
-            /* 게임 그리드 */
-            .game-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 25px; margin-top: 40px; }
-            .game-card { 
-                background: var(--gp-card); 
-                border-radius: 12px; 
-                overflow: hidden; 
-                cursor: pointer; 
-                transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275); 
-                border: 1px solid rgba(255,255,255,0.05);
-                position: relative;
-            }
-            .game-card:hover { transform: translateY(-10px); border-color: var(--gp-purple); box-shadow: 0 10px 30px rgba(139, 92, 246, 0.2); }
-            .game-card img { width: 100%; height: 160px; object-fit: cover; }
-            .card-info { padding: 20px; }
-            .card-title { font-weight: bold; font-size: 1.1rem; margin-bottom: 8px; }
-            .card-tag { color: var(--gp-green); font-size: 0.85rem; font-weight: bold; }
-            .discount { position: absolute; top: 10px; right: 10px; background: var(--gp-green); color: #000; padding: 3px 8px; border-radius: 4px; font-weight: 900; font-size: 0.8rem; }
-
-            /* 상세 분석 모달 */
-            #detail-view { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.95); display: none; z-index: 2000; overflow-y: auto; }
-            .detail-box { max-width: 850px; margin: 50px auto; background: var(--gp-bg); border-radius: 15px; border: 1px solid #333; overflow: hidden; position: relative; }
-            .close-btn { position: absolute; top: 20px; right: 25px; font-size: 2.5rem; cursor: pointer; color: #fff; z-index: 10; }
-            .video-wrap { position: relative; padding-bottom: 56.25%; height: 0; background: #000; }
-            .video-wrap iframe { position: absolute; top: 0; left: 0; width: 100%; height: 100%; border: none; }
-            .detail-text { padding: 40px; line-height: 1.8; }
-            .btn-buy { display: block; background: var(--gp-purple); color: #fff; padding: 18px; text-align: center; border-radius: 8px; font-weight: bold; text-decoration: none; margin-top: 25px; transition: 0.3s; }
-            .btn-buy:hover { filter: brightness(1.2); transform: scale(1.02); }
+            /* AI 보고서 내 HTML 스타일링 */
+            .report-card { background: #0d1117; border-radius: 10px; padding: 25px; border-left: 4px solid var(--purple); }
+            .stat-badge { display: inline-block; padding: 4px 12px; border-radius: 20px; font-size: 0.8rem; font-weight: bold; background: var(--purple); margin-bottom: 10px; }
         </style>
     </head>
     <body>
-        <nav>
-            <a href="/" class="logo">GAMEPICK</a>
-            <div class="search-box">
-                <input type="text" id="gameInput" placeholder="하고 싶은 플레이를 입력해보세요..." onkeypress="if(event.keyCode==13) searchGame()">
-            </div>
-        </nav>
-
-        <div class="wrapper">
-            <aside class="sidebar">
-                <div class="side-title">장르 카테고리</div>
-                <ul class="side-menu">
-                    <li onclick="quickSearch('액션')">액션</li>
-                    <li onclick="quickSearch('RPG')">RPG</li>
-                    <li onclick="quickSearch('전략')">전략</li>
-                    <li onclick="quickSearch('시뮬레이션')">시뮬레이션</li>
-                </ul>
-                <div class="side-title">플레이 성향</div>
-                <ul class="side-menu">
-                    <li onclick="quickSearch('무료 게임')">무료 플레이</li>
-                    <li onclick="quickSearch('할인 중인 게임')">특별 할인</li>
-                    <li onclick="quickSearch('AI 추천 게임')">AI 추천</li>
-                </ul>
-            </aside>
-
-            <main class="main-content">
-                <div class="hero-section">
-                    <h1>무엇을 플레이하고 싶나요?</h1>
-                    <div class="tag-group">
-                        <span class="play-tag" onclick="quickSearch('타격감 폭발하는 액션 게임')">#타격감_폭발</span>
-                        <span class="play-tag" onclick="quickSearch('친구랑 밤샐 수 있는 협동 게임')">#친구랑_함께</span>
-                        <span class="play-tag" onclick="quickSearch('조용히 힐링하는 농장 게임')">#힐링_필요</span>
-                        <span class="play-tag" onclick="quickSearch('머리 터지는 고난이도 전략')">#뇌섹남_전략</span>
-                        <span class="play-tag" onclick="quickSearch('압도적인 그래픽의 오픈월드')">#그래픽_깡패</span>
-                    </div>
-                </div>
-
-                <div class="game-grid">
-                    <div class="game-card" onclick="quickSearch('엘든 링')">
-                        <div class="discount">-30%</div>
-                        <img src="https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/1245620/header.jpg">
-                        <div class="card-info"><div class="card-title">ELDEN RING</div><div class="card-tag">#정복감 #고난이도</div></div>
-                    </div>
-                    <div class="game-card" onclick="quickSearch('팰월드')">
-                        <img src="https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/1623730/header.jpg">
-                        <div class="card-info"><div class="card-title">Palworld</div><div class="card-tag">#생존 #수집</div></div>
-                    </div>
-                    <div class="game-card" onclick="quickSearch('사이버펑크 2077')">
-                        <div class="discount">-50%</div>
-                        <img src="https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/1091500/header.jpg">
-                        <div class="card-info"><div class="card-title">Cyberpunk 2077</div><div class="card-tag">#오픈월드 #미래</div></div>
-                    </div>
-                    <div class="game-card" onclick="quickSearch('몬스터 헌터 와일즈')">
-                        <img src="https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/2246340/header.jpg">
-                        <div class="card-info"><div class="card-title">Monster Hunter Wilds</div><div class="card-tag">#사냥 #대작</div></div>
-                    </div>
-                </div>
-            </main>
+        <div class="header">
+            <h1>GAMEPICK <span style="color:#fff;">B2B</span></h1>
+            <p>AI 기반 수리적 게임 밸런스 및 경제 시뮬레이터</p>
         </div>
 
-        <div id="detail-view">
-            <div class="detail-box">
-                <span class="close-btn" onclick="closeDetail()">&times;</span>
-                <div id="detail-content"></div>
+        <div class="container">
+            <div class="input-grid">
+                <div class="input-group" style="grid-column: span 2;">
+                    <label>아이템/시스템 명칭</label>
+                    <input type="text" id="itemName" placeholder="예: 드래곤 슬레이어 검">
+                </div>
+                <div class="input-group">
+                    <label>주요 능력치 (공격력/방어력 등)</label>
+                    <input type="number" id="attackPower" placeholder="150">
+                </div>
+                <div class="input-group">
+                    <label>설정 가격 (게임 재화)</label>
+                    <input type="number" id="itemPrice" placeholder="50000">
+                </div>
+                <div class="input-group">
+                    <label>드롭/획득 확률 (0.001 ~ 1.0)</label>
+                    <input type="text" id="dropRate" placeholder="0.005">
+                </div>
+                <div class="input-group">
+                    <label>권장 사용 레벨</label>
+                    <input type="number" id="userLevel" placeholder="50">
+                </div>
             </div>
+            <button onclick="runSimulation()">AI 시뮬레이션 및 보고서 생성</button>
+
+            <div id="loading">
+                <div style="color: var(--purple); font-size: 1.2rem; font-weight: bold;">AI가 가상 플레이어 10,000명을 투입하여 경제를 분석 중입니다...</div>
+            </div>
+
+            <div id="result-area"></div>
         </div>
 
         <script>
-            function closeDetail() { document.getElementById('detail-view').style.display = 'none'; }
-            function quickSearch(name) { document.getElementById('gameInput').value = name; searchGame(); }
-            
-            async function searchGame() {
-                const query = document.getElementById("gameInput").value;
-                const view = document.getElementById("detail-view");
-                const content = document.getElementById("detail-content");
-                if(!query) return;
+            async function runSimulation() {
+                const resultArea = document.getElementById("result-area");
+                const loading = document.getElementById("loading");
+                
+                const data = {
+                    itemName: document.getElementById("itemName").value,
+                    attackPower: parseInt(document.getElementById("attackPower").value),
+                    itemPrice: parseInt(document.getElementById("itemPrice").value),
+                    dropRate: parseFloat(document.getElementById("dropRate").value),
+                    userLevel: parseInt(document.getElementById("userLevel").value)
+                };
 
-                view.style.display = 'block';
-                content.innerHTML = "<div style='padding:100px; text-align:center;'><h2>AI가 최적의 게임 경험을 분석 중입니다...</h2></div>";
+                if(!data.itemName) { alert("항목 이름을 입력해주세요."); return; }
+
+                loading.style.display = "block";
+                resultArea.style.display = "none";
 
                 try {
-                    const res = await fetch("/search", {
+                    const res = await fetch("/analyze-economy", {
                         method: "POST",
                         headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ query: query })
+                        body: JSON.stringify(data)
                     });
-                    const data = await res.json();
-                    content.innerHTML = data.result;
-                } catch(e) { content.innerHTML = "<div style='padding:100px;'>서버 연결에 실패했습니다.</div>"; }
+                    const result = await res.json();
+                    resultArea.innerHTML = result.report;
+                    resultArea.style.display = "block";
+                } catch(e) {
+                    alert("서버 통신 에러가 발생했습니다.");
+                } finally {
+                    loading.style.display = "none";
+                }
             }
         </script>
     </body>
     </html>
     """
 
-@app.post("/search")
-async def search_game(data: SearchQuery):
+# 5. AI 분석 로직
+@app.post("/analyze-economy")
+async def analyze_economy(data: EconomyData):
     try:
         response = client.chat.completions.create(
             model="gpt-4o",
             messages=[
-                {"role": "system", "content": """너는 게임 경험 큐레이터야. 사용자가 원하는 '플레이 스타일'을 입력하면 다음을 포함한 HTML 결과물을 만들어줘:
-                1. 상단: 해당 게임의 '공식 트레일러' 유튜브 iframe (가장 몰입감 있는 영상으로)
-                2. 중간: 게임 제목, 핵심 특징, 그리고 '왜 이 게임이 당신의 플레이 스타일에 적합한지'에 대한 AI 분석 리포트.
-                3. 하단: [스팀 상점 페이지로 이동] 버튼 (class='btn-buy' 사용).
-                디자인은 보라색 포인트가 들어간 다크 모드 스타일로 세련되게 작성해줘."""},
-                {"role": "user", "content": f"내 플레이 성향 분석 요청: {data.query}"}
+                {"role": "system", "content": """너는 세계 최고의 게임 경제 기획자이자 수리 밸런스 전문가야. 
+                사용자가 입력한 게임 아이템/시스템 데이터를 바탕으로 다음 내용을 포함한 전문적인 컨설팅 보고서를 HTML로 작성해줘.
+                
+                1. [핵심 요약] 아이템의 가치와 현재 기획의 적절성 평가.
+                2. [수리적 분석] 드롭률과 가격을 고려했을 때 유저가 이 아이템을 얻기 위해 평균적으로 소요되는 시간(Playtime)과 재화 가치 산출.
+                3. [밸런스 경고] 이 수치가 유지될 경우 발생할 수 있는 '오버밸런스' 혹은 '버려지는 아이템' 가능성 경고.
+                4. [경제 전망] 인플레이션에 미치는 영향 (재화 회수 효율성 등).
+                5. [최종 권고안] 기획자가 수정해야 할 스탯이나 가격의 구체적인 수치 제안.
+                
+                디자인: 보라색 포인트를 사용하고, 전문 용어를 섞어서 격식 있게 작성해줘."""},
+                {"role": "user", "content": f"기획 데이터: {data.json()}"}
             ]
         )
-        return {"result": response.choices[0].message.content}
+        return {"report": response.choices[0].message.content}
     except Exception as e:
-        return {"result": f"에러 발생: {str(e)}"}
+        return {"report": f"<p style='color:red;'>분석 실패: {str(e)}</p>"}
